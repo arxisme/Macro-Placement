@@ -98,17 +98,7 @@ Each benchmark includes:
 - **To qualify for the Grand Prize, your placement must also produce better WNS, TNS, and Area than both baselines when evaluated through the OpenROAD flow on NG45 designs**
 - Both baselines achieve zero overlaps (enforced as hard constraint)
 
-## 💡 Why This Is Hard
-
-Despite "only" 246-537 macros, this problem is extremely challenging:
-
-1. **Massive search space**: ~10^800 possible placements (even with constraints)
-2. **Conflicting objectives**: Wirelength wants clustering, density wants spreading, congestion wants routing space
-3. **Non-convex landscape**: Millions of local minima, discontinuities, plateaus
-4. **Long-range dependencies**: Moving one macro affects costs globally through thousands of nets
-5. **Hard constraints**: No overlaps between heterogeneous sizes (33× size variation)
-6. **Tight packing**: 43-53% area utilization leaves little slack
-7. **Runtime matters**: Must be fast enough to be practical (< 5 minutes ideal)
+*Runtime matters**: Must be fast enough to be practical (< 5 minutes ideal)
 
 Classical methods (SA, RePlAce) have been refined for decades but still have room for improvement!
 
