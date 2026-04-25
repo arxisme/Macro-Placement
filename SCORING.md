@@ -21,18 +21,6 @@ Only submissions that pass **Stage 1** on **all designs** are eligible for the G
 
 ---
 
-## Which Submissions Are Evaluated?
-
-The **top 7 submissions by Tier 1 proxy cost** (IBM benchmarks) are evaluated through the full OpenROAD flow on NG45 designs.
-
-Designs evaluated:
-- `ariane133` (public)
-- `ariane136` (public)
-- `mempool_tile` (public)
-- `nvdla` (public)
-- 1–2 hidden NG45 designs (to prevent overfitting)
-
----
 
 ## Baselines
 
@@ -47,7 +35,7 @@ Baseline numbers will be published for all public designs once generated.
 
 ---
 
-## Stage 1 — Feasibility (Timing Constraints)
+## Feasibility (Timing Constraints)
 
 A submission must **not regress timing** below both baselines on any design.
 
@@ -58,23 +46,9 @@ WNS_sub ≥ min(WNS_SA, WNS_RP)
 TNS_sub ≥ min(TNS_SA, TNS_RP)
 ```
 
-### Interpretation
 
-- You **cannot be worse than both baselines** on WNS or TNS for any design
-- You may match one baseline and beat the other
-- If either condition fails on **any design** → submission is **disqualified** from the Grand Prize
 
----
-
-## Stage 2 — Scoring (Geometric Mean of Ratios)
-
-All feasible submissions are ranked using a **single scalar score** computed from improvement ratios. This approach:
-
-- Naturally handles metrics on different scales
-- Prioritizes timing improvement (WNS most, then TNS) while keeping Area in the score
-- Uses a **weighted geometric mean** with fixed weights **(WNS:3, TNS:2, Area:1)** reflecting the relative importance of each metric in the final design
-
-### Step 1 — Compute Average Baselines
+### Compute Average Baselines
 
 For each design, compute the average of SA and RePlAce:
 
@@ -84,7 +58,7 @@ TNS_avg = (TNS_SA + TNS_RP) / 2
 Area_avg = (Area_SA + Area_RP) / 2
 ```
 
-### Step 2 — Compute Improvement Ratios
+### Compute Improvement Ratios
 
 For each design:
 
@@ -94,7 +68,7 @@ R_TNS  = TNS_sub  / TNS_avg       (both values are negative; ratio > 1 means bet
 R_Area = Area_avg / Area_sub      (lower area is better, so invert)
 ```
 
-### Step 3 — Compute Per-Design Score
+###  Compute Per-Design Score
 
 Using a **weighted geometric mean** with weights (WNS:3, TNS:2, Area:1):
 
@@ -119,7 +93,6 @@ Total_Score = geometric mean of Design_Scores across all evaluated designs
             = (Design_Score_1 × Design_Score_2 × ... × Design_Score_N) ^ (1/N)
 ```
 
-**Highest Total Score wins the Grand Prize.**
 
 ### Example
 
@@ -133,17 +106,7 @@ Suppose for `ariane133`:
 R_WNS  = -0.8 / -1.3 = 0.615   → less negative = better, but ratio < 1?
 ```
 
-**Wait — important note on WNS/TNS ratio interpretation:**
 
-Since WNS and TNS are negative values (slack violations), a *less negative* value is better. When dividing two negative numbers, a less negative numerator (better) over a more negative denominator gives a ratio **less than 1**. To make the ratio intuitive (> 1 = better):
-
-```
-R_WNS  = WNS_avg / WNS_sub       (flipped: avg over submission)
-R_TNS  = TNS_avg / TNS_sub       (flipped: avg over submission)
-R_Area = Area_avg / Area_sub     (avg over submission)
-```
-
-Corrected example:
 ```
 R_WNS  = -1.3 / -0.8  = 1.625   (62.5% better WNS)
 R_TNS  = -10000 / -6000 = 1.667  (66.7% better TNS)
@@ -188,18 +151,5 @@ Submissions may be disqualified if they:
 
 ---
 
-## Reproducibility
 
-- Evaluation uses a versioned OpenROAD flow; the exact version used for final scoring will be documented with the results
-- The evaluation pipeline will be released alongside final results
-- All submissions in a given evaluation round are run under the same conditions on the same hardware
 
----
-
-## Summary
-
-To win the Grand Prize:
-
-1. Be in the **top 7 by proxy cost** (Tier 1)
-2. **Pass feasibility** — don't regress timing below both baselines on any design
-3. **Maximize your weighted geometric mean score** — prioritize WNS, then TNS, then Area (weights 3:2:1) across all designs

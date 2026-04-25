@@ -237,9 +237,9 @@ def _print_summary_table(results):
 
     print()
     print(f"Total runtime: {total_runtime:.2f}s")
-    if total_overlaps > 0:
-        print(f"⚠  DISQUALIFIED: {total_overlaps} total overlaps across benchmarks")
-    print()
+    # if total_overlaps > 0:
+    #     print(f"⚠  DISQUALIFIED: {total_overlaps} total overlaps across benchmarks")
+    # print()
 
 
 # ── CLI entry point ──────────────────────────────────────────────────────────
