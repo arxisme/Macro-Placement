@@ -51,9 +51,12 @@ NG45_BENCHMARKS = {
     "nvdla": "external/MacroPlacement/Flows/NanGate45/nvdla/netlist/output_CT_Grouping",
 }
 
+ADAPTEC_BENCHMARKS = {
+    f"adaptec{i}": f"benchmarks/adaptec/adaptec{i}" for i in range(1, 6)
+}
+
 BENCHMARKS = IBM_BENCHMARKS
 
-# ── Published baselines ─────────────────────────────────────────────────────
 
 SA_BASELINES = {
     "ibm01": 1.3166,
@@ -262,10 +265,24 @@ def main():
         help="Run on a specific benchmark (e.g. ibm01). Default: ibm01.",
     )
     parser.add_argument(
+        "--benchmark-dir",
+        type=str,
+        default=None,
+        help=(
+            "Run on a benchmark directory containing netlist.pb.txt "
+            "(+ optional initial.plc). Overrides --benchmark/--all/--ng45."
+        ),
+    )
+    parser.add_argument(
         "--all",
         "-a",
         action="store_true",
         help="Run on all 17 IBM benchmarks.",
+    )
+    parser.add_argument(
+        "--adaptec",
+        action="store_true",
+        help="Run on Adaptec benchmarks.",
     )
     parser.add_argument(
         "--ng45",
@@ -292,8 +309,17 @@ def main():
     placer_name = type(placer).__name__
 
     # ── determine which benchmarks to run ────────────────────────────────
-    if args.ng45:
+    custom_benchmark_dir = None
+    if args.benchmark_dir:
+        custom_benchmark_dir = Path(args.benchmark_dir)
+        if not custom_benchmark_dir.exists():
+            print(f"Error: benchmark directory not found: {custom_benchmark_dir}")
+            sys.exit(1)
+        benchmarks_to_run = [custom_benchmark_dir.name]
+    elif args.ng45:
         benchmarks_to_run = list(NG45_BENCHMARKS.keys())
+    elif args.adaptec:
+        benchmarks_to_run = list(ADAPTEC_BENCHMARKS.keys())
     elif args.all:
         benchmarks_to_run = BENCHMARKS
     else:
@@ -308,8 +334,35 @@ def main():
     results = []
     for name in benchmarks_to_run:
         print(f"  {name}...", end=" ", flush=True)
-        ng45_dir = NG45_BENCHMARKS.get(name) if args.ng45 or name in NG45_BENCHMARKS else None
-        result = evaluate_benchmark(placer, name, str(testcase_root), ng45_dir=ng45_dir)
+        if custom_benchmark_dir is not None:
+            benchmark, plc = load_benchmark_from_dir(str(custom_benchmark_dir))
+            start = time.time()
+            placement = placer.place(benchmark)
+            runtime = time.time() - start
+            is_valid, violations = validate_placement(placement, benchmark)
+            costs = compute_proxy_cost(placement, benchmark, plc)
+            result = {
+                "name": name,
+                "proxy_cost": costs["proxy_cost"],
+                "wirelength": costs["wirelength_cost"],
+                "density": costs["density_cost"],
+                "congestion": costs["congestion_cost"],
+                "overlaps": costs["overlap_count"],
+                "runtime": runtime,
+                "valid": is_valid,
+                "sa_baseline": None,
+                "replace_baseline": None,
+                "placement": placement,
+                "benchmark": benchmark,
+                "plc": plc,
+            }
+        else:
+            custom_dir = None
+            if args.ng45 or name in NG45_BENCHMARKS:
+                custom_dir = NG45_BENCHMARKS.get(name)
+            elif args.adaptec or name in ADAPTEC_BENCHMARKS:
+                custom_dir = ADAPTEC_BENCHMARKS.get(name)
+            result = evaluate_benchmark(placer, name, str(testcase_root), ng45_dir=custom_dir)
         results.append(result)
 
         status = (

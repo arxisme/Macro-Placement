@@ -274,11 +274,11 @@ class PlacementCost(object):
                         self.modules_w_pins.append(soft_macro)
                         self.modules.append(soft_macro)
                         # mapping node_name ==> node idx
-                        self.mod_name_to_indices[node_name] = node_cnt-1
+                        self.mod_name_to_indices[node_name] = len(self.modules_w_pins) - 1
                         # mapping node idx ==> node_name
-                        self.indices_to_mod_name[node_cnt-1] = node_name
+                        self.indices_to_mod_name[len(self.modules_w_pins) - 1] = node_name
                         # store current node indx
-                        self.soft_macro_indices.append(node_cnt-1)
+                        self.soft_macro_indices.append(len(self.modules_w_pins) - 1)
 
                     elif attr_dict['type'][1] == 'macro_pin':
                         # [MACRO_NAME]/[PIN_NAME]
@@ -305,11 +305,11 @@ class PlacementCost(object):
 
                         self.modules_w_pins.append(soft_macro_pin)
                         # mapping node_name ==> node idx
-                        self.mod_name_to_indices[node_name] = node_cnt-1
+                        self.mod_name_to_indices[node_name] = len(self.modules_w_pins) - 1
                         # mapping node idx ==> node_name
-                        self.indices_to_mod_name[node_cnt-1] = node_name
+                        self.indices_to_mod_name[len(self.modules_w_pins) - 1] = node_name
                         # store current node indx
-                        self.soft_macro_pin_indices.append(node_cnt-1)
+                        self.soft_macro_pin_indices.append(len(self.modules_w_pins) - 1)
 
                         if soft_macro_name in self.soft_macros_to_inpins.keys():
                             self.soft_macros_to_inpins[soft_macro_name]\
@@ -330,11 +330,11 @@ class PlacementCost(object):
                         self.modules_w_pins.append(hard_macro)
                         self.modules.append(hard_macro)
                         # mapping node_name ==> node idx
-                        self.mod_name_to_indices[node_name] = node_cnt-1
+                        self.mod_name_to_indices[node_name] = len(self.modules_w_pins) - 1
                         # mapping node idx ==> node_name
-                        self.indices_to_mod_name[node_cnt-1] = node_name
+                        self.indices_to_mod_name[len(self.modules_w_pins) - 1] = node_name
                         # store current node indx
-                        self.hard_macro_indices.append(node_cnt-1)
+                        self.hard_macro_indices.append(len(self.modules_w_pins) - 1)
 
                     elif attr_dict['type'][1] == 'MACRO_PIN':
                         # [MACRO_NAME]/[PIN_NAME]
@@ -363,11 +363,11 @@ class PlacementCost(object):
 
                         self.modules_w_pins.append(hard_macro_pin)
                         # mapping node_name ==> node idx
-                        self.mod_name_to_indices[node_name] = node_cnt-1
+                        self.mod_name_to_indices[node_name] = len(self.modules_w_pins) - 1
                         # mapping node idx ==> node_name
-                        self.indices_to_mod_name[node_cnt-1] = node_name
+                        self.indices_to_mod_name[len(self.modules_w_pins) - 1] = node_name
                         # store current node indx
-                        self.hard_macro_pin_indices.append(node_cnt-1)
+                        self.hard_macro_pin_indices.append(len(self.modules_w_pins) - 1)
 
                         # add to dict
                         if hard_macro_name in self.hard_macros_to_inpins.keys():
@@ -395,11 +395,11 @@ class PlacementCost(object):
                         self.modules_w_pins.append(port)
                         self.modules.append(port)
                         # mapping node_name ==> node idx
-                        self.mod_name_to_indices[node_name] = node_cnt-1
+                        self.mod_name_to_indices[node_name] = len(self.modules_w_pins) - 1
                         # mapping node idx ==> node_name
-                        self.indices_to_mod_name[node_cnt-1] = node_name
+                        self.indices_to_mod_name[len(self.modules_w_pins) - 1] = node_name
                         # store current node indx
-                        self.port_indices.append(node_cnt-1)
+                        self.port_indices.append(len(self.modules_w_pins) - 1)
 
         # 1. mapping connection degree to each macros
         # 2. update offset based on Hard macro orientation

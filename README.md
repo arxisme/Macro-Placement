@@ -1,7 +1,29 @@
 
 # ClusterAnchor
-The ClusterIter.py inside submissions contains the algorithm, in the Results folder contains the result along with the visualization in the Results/Cluster-Vis folder
- 
+
+This project focuses on the intricate challenge of macro placement. The main algorithm currently under active development is implemented in `submissions/ClusterIter.py`. The `Results` folder contains the final output benchmarks, along with physical floorplan visualizations stored in `Results/Cluster-Vis`.
+
+## Running the Placer
+
+You can evaluate the main algorithm using the project's native evaluator. To test on the ICCAD04 `ibm01` benchmark:
+```bash
+uv run evaluate submissions/ClusterIter.py -b ibm01
+```
+
+You can seamlessly evaluate on the gigantic Adaptec benchmarks by specifying the `-b` flag:
+```bash
+uv run evaluate submissions/ClusterIter.py -b adaptec1
+```
+
+## Parsing Adaptec Benchmarks to `.pt` Tensors
+No need to convert now , the files are already converted.
+If you are working with the original raw `.tar.gz` Bookshelf formats from the ISPD2005 dataset, they are converted into `.pt` serialized tensors and `.pb.txt` protobuf files via the `scripts/convert_adaptec_benchmarks.py` script. 
+
+First, ensure the uncompressed adaptec directories (e.g., `adaptec1/`) are located in `benchmarks/ispd2005`. Then, execute the following command:
+```bash
+uv run python scripts/convert_adaptec_benchmarks.py --input-root benchmarks/ispd2005 --designs adaptec1 adaptec2 adaptec3 adaptec4
+```
+This script handles the Bookshelf parsing, resolves internal macro pin translation rules, patches grid geometry metadata into the generated `.plc`, and successfully outputs everything to `benchmarks/adaptec/` and `benchmarks/processed/public/` (the `.pt` models).
 
 ## About Macro Placement
 

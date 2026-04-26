@@ -45,7 +45,7 @@ htmlcov/
 .tox/
 
 # Data and results
-benchmarks/raw/
+benchmarks/*
 results/
 *.pt
 *.pth

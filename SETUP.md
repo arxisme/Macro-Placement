@@ -196,6 +196,33 @@ This is what the SA baseline does between iterations. Note: this is slow in Pyth
 
 ## Running Benchmarks
 
+### Adaptec Benchmarks (Bookshelf)
+
+Adaptec benchmarks are in UCLA/Bookshelf format, so they must be converted to
+this project's benchmark directory format first (`netlist.pb.txt` + `initial.plc`).
+
+Use:
+
+```bash
+# Example input layout:
+# /data/adaptec/adaptec1/adaptec1.{nodes,nets,pl,scl,wts}
+# /data/adaptec/adaptec2/adaptec2.{nodes,nets,pl,scl,wts}
+
+python scripts/convert_adaptec_benchmarks.py \
+    --input-root /data/adaptec \
+    --designs adaptec1 adaptec2 adaptec3 adaptec4 adaptec5
+```
+
+This writes converted directories under `benchmarks/adaptec/<design>/` and
+also exports `benchmarks/processed/public/<design>.pt`.
+
+Evaluate a converted benchmark directly:
+
+```bash
+uv run evaluate submissions/my_heuristic.py \
+    --benchmark-dir benchmarks/adaptec/adaptec1
+```
+
 ### IBM Benchmarks (Tier 1 — Proxy Cost)
 
 The 17 IBM ICCAD04 benchmarks are in `external/MacroPlacement/Testcases/ICCAD04/`. Run a single benchmark or the full suite using the demo placer:
