@@ -205,3 +205,14 @@ pytest --cov
 - All commands assume you run from repository root unless stated otherwise.
 - Some commands require initialized submodules (`external/MacroPlacement`) and optional ORFS checkout.
 - Several docs mention helper scripts such as `scripts/demo_placement_to_def.py`, `scripts/compute_ibm_baselines.py`, and `scripts/generate_leaderboard.py`; these files are not present in this workspace snapshot.
+
+## Validate the placement:
+```
+uv run evaluate submissions/cluster_anchor_placer.py -b ibm01 --vis
+pythonfrom macro_place.utils import validate_placement
+is_valid, violations = validate_placement(placement, benchmark)
+print(is_valid, violations)
+bash# 3. For OpenROAD DEF export (optional, takes 3-8 hrs per design)
+python scripts/evaluate_with_orfs.py --benchmark ariane133_ng45 --no-docker \
+    --placement my_placement.pt
+```

@@ -10,17 +10,6 @@ All submissions are evaluated using **mechanical scoring rules** applied to outp
 
 ---
 
-## Overview
-
-The Grand Prize evaluation consists of **two stages**:
-
-1. **Feasibility** — hard timing constraints (pass/fail)
-2. **Scoring** — deterministic ranking via geometric mean of improvement ratios
-
-Only submissions that pass **Stage 1** on **all designs** are eligible for the Grand Prize.
-
----
-
 
 ## Baselines
 
@@ -94,62 +83,12 @@ Total_Score = geometric mean of Design_Scores across all evaluated designs
 ```
 
 
-### Example
-
-Suppose for `ariane133`:
-- SA baseline: WNS = -1.4 ns, TNS = -11,000 ns, Area = 4,300,000 μm²
-- RePlAce baseline: WNS = -1.2 ns, TNS = -9,000 ns, Area = 4,100,000 μm²
-- Average baseline: WNS = -1.3 ns, TNS = -10,000 ns, Area = 4,200,000 μm²
-- Submission: WNS = -0.8 ns, TNS = -6,000 ns, Area = 4,000,000 μm²
-
-```
-R_WNS  = -0.8 / -1.3 = 0.615   → less negative = better, but ratio < 1?
-```
 
 
-```
-R_WNS  = -1.3 / -0.8  = 1.625   (62.5% better WNS)
-R_TNS  = -10000 / -6000 = 1.667  (66.7% better TNS)
-R_Area = 4200000 / 4000000 = 1.05 (5% smaller area)
 
-Design_Score = (1.625^3 × 1.667^2 × 1.05^1) ^ (1/6)
-             = (4.291 × 2.779 × 1.05) ^ (1/6)
-             = (12.521) ^ (1/6)
-             = 1.524
-```
 
-This submission scores **1.524** on ariane133 — roughly 52% better than the average baseline, with WNS and TNS gains emphasized by the (3,2,1) weighting. Under equal (1,1,1) weighting the same submission would have scored 1.417.
 
----
 
-## Tie-Breaking
-
-If two submissions have identical Total Scores:
-
-1. Higher geometric mean of R_TNS across designs
-2. Higher geometric mean of R_WNS across designs
-3. Higher geometric mean of R_Area across designs
-
----
-
-## Edge Cases
-
-- **Submission achieves WNS = 0 and TNS = 0**: The clock period is tightened (frequency raised) and the design is re-evaluated, iteratively, until WNS < 0 reappears. Ranking then uses the WNS/TNS measured at that tighter clock. This ensures that submissions which close timing at the nominal clock are still differentiable on *how much frequency headroom* they provide, rather than being capped at a ceiling.
-  - The tightening schedule is fixed in advance (e.g., reduce period by 5% each step, up to a bounded number of steps) and applied identically to all submissions for that design.
-  - Baselines are re-evaluated at the tightened clock only if at least one baseline also reached zero-slack at the nominal clock; otherwise the original baseline numbers are used.
-- **WNS or TNS = 0.0 for both baselines (but submission has violations)**: That metric's ratio is excluded from the geometric mean for that design; the weights of the remaining metrics are renormalized so they still sum to 6.
-
----
-
-## Disallowed Strategies
-
-Submissions may be disqualified if they:
-
-- Intentionally degrade timing to game scoring
-- Modify or bypass the evaluation flow
-- Hardcode design-specific hacks targeting known benchmarks
-
----
 
 
 

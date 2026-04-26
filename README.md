@@ -1,5 +1,7 @@
 
-
+# ClusterAnchor
+The ClusterIter.py inside submissions contains the algorithm, in the Results folder contains the result along with the visualization in the Results/Cluster-Vis folder
+ 
 
 ## About Macro Placement
 
@@ -95,12 +97,9 @@ Each benchmark includes:
 **Baseline Analysis:**
 - RePlAce (⭐) consistently outperforms SA across all benchmarks
 - RePlAce achieves 15-55% lower proxy cost than SA
-- **To qualify for the Grand Prize, your placement must also produce better WNS, TNS, and Area than both baselines when evaluated through the OpenROAD flow on NG45 designs**
 - Both baselines achieve zero overlaps (enforced as hard constraint)
 
-*Runtime matters**: Must be fast enough to be practical (< 5 minutes ideal)
 
-Classical methods (SA, RePlAce) have been refined for decades but still have room for improvement!
 
 ## 📖 Documentation
 

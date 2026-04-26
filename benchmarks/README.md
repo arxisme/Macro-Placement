@@ -7,13 +7,13 @@ This directory contains pre-processed benchmark data in PyTorch tensor format.
 ```
 benchmarks/
 ├── processed/
-│   └── public/           # Public benchmarks (for competition)
+│   └── public/           
 │       ├── ariane133_ng45.pt
 │       ├── ariane136_ng45.pt
 │       ├── nvdla_ng45.pt
 │       └── mempool_tile_ng45.pt
 └── metadata/
-    └── baseline_scores.json  # Initial placement baseline scores
+    └── baseline_scores.json  
 ```
 
 ## Benchmark Details
