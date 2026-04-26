@@ -1,91 +1,106 @@
-"""
-Connectivity-Aware Center-Biased Heuristic Placer.
+"""Cluster-and-anchor macro placer.
 
-Key ideas:
-1. Sort movable hard macros by connectivity degree (highest first)
-2. Assign high-degree macros center-biased targets
-3. Legalize with overlap-safe ring search and adaptive keep-out relaxation
+This submission uses a compact version of the idea from your pasted flow:
+1. Group movable hard macros into connectivity-based clusters.
+2. Assign each cluster a tethered anchor near the center of the canvas.
+3. Place macros inside each cluster with legal ring-search around that anchor.
+4. Keep fixed macros and soft macros at their original locations.
 
-Usage:
-    uv run evaluate submissions/my_heuristic.py -b ibm01
-    uv run evaluate submissions/my_heuristic.py --all
+The evaluator only needs a class with a place(self, benchmark) method that
+returns a torch.Tensor of shape [num_macros, 2].
 """
+
+from __future__ import annotations
 
 import math
+from collections import deque
+
 import torch
 
 from macro_place.benchmark import Benchmark
 
 
-class ConnectivityCenterPlacer:
-    """Connectivity-aware placer with center-biased target generation."""
+class ClusterAnchorPlacer:
+    """Connectivity-aware placer with cluster anchors and legal fallback search."""
 
     def __init__(
         self,
-        base_keepout_ratio: float = 0.06,
-        edge_gap: float = 0.001,
+        cluster_size: int = 8,
+        max_rings: int = 60,
         min_search_step: float = 2.0,
-        max_rings: int = 90,
-        fallback_grid_steps: int = 36,
-        legalization_passes: int = 2,
+        fallback_grid_steps: int = 28,
+        edge_gap: float = 0.001,
     ):
-        self.base_keepout_ratio = base_keepout_ratio
-        self.edge_gap = edge_gap
-        self.min_search_step = min_search_step
-        self.max_rings = max_rings
-        self.fallback_grid_steps = fallback_grid_steps
-        self.legalization_passes = legalization_passes
+        self.cluster_size = max(1, int(cluster_size))
+        self.max_rings = max(1, int(max_rings))
+        self.min_search_step = float(min_search_step)
+        self.fallback_grid_steps = max(4, int(fallback_grid_steps))
+        self.edge_gap = float(edge_gap)
 
     def place(self, benchmark: Benchmark) -> torch.Tensor:
         placement = benchmark.macro_positions.clone()
 
         hard_mask = benchmark.get_hard_macro_mask()
-        movable = benchmark.get_movable_mask() & hard_mask
-        movable_indices = torch.where(movable)[0].tolist()
-
+        movable_mask = benchmark.get_movable_mask() & hard_mask
+        movable_indices = torch.where(movable_mask)[0].tolist()
         if not movable_indices:
             return placement
 
-        sizes = benchmark.macro_sizes
+        num_hard = benchmark.num_hard_macros
         canvas_w = float(benchmark.canvas_width)
         canvas_h = float(benchmark.canvas_height)
-        center_x = canvas_w * 0.5
-        center_y = canvas_h * 0.5
+        sizes = benchmark.macro_sizes
+        degrees = self._macro_degrees(benchmark)
 
-        degrees = self._compute_macro_degrees(benchmark)
-
-        # Higher connectivity first; tie-break with larger area.
-        movable_indices.sort(
-            key=lambda i: (
-                -float(degrees[i].item()),
-                -float((sizes[i, 0] * sizes[i, 1]).item()),
-                -float(sizes[i, 1].item()),
+        # Build connectivity-based clusters, then split large components into chunks.
+        clusters = self._build_clusters(benchmark, movable_mask, degrees)
+        clusters.sort(
+            key=lambda cluster: (
+                -sum(float(degrees[idx].item()) for idx in cluster),
+                -sum(float((sizes[idx, 0] * sizes[idx, 1]).item()) for idx in cluster),
+                -len(cluster),
             )
         )
 
-        num_hard = benchmark.num_hard_macros
         placed_hard = torch.zeros(num_hard, dtype=torch.bool)
+        placed_hard[~movable_mask[:num_hard]] = True
 
-        # Fixed hard macros are immutable obstacles.
-        for i in range(num_hard):
-            if not movable[i]:
-                placed_hard[i] = True
+        # Sort movable macros globally by size (largest first) to prevent boxing
+        all_movable_sorted = sorted(
+            movable_indices,
+            key=lambda idx: (
+                -float((sizes[idx, 0] * sizes[idx, 1]).item()),
+                -float(sizes[idx, 1].item()),
+                -float(sizes[idx, 0].item()),
+            ),
+        )
 
-        keepout = self._build_keepout(sizes[:num_hard], degrees)
+        # Place all macros in size order, using clusters only for anchoring
+        cluster_assignments = {}
+        for cluster_id, cluster in enumerate(clusters):
+            for idx in cluster:
+                cluster_assignments[idx] = cluster_id
 
-        total = len(movable_indices)
-        for rank, idx in enumerate(movable_indices):
-            target_x, target_y = self._target_from_rank(
-                idx,
-                rank,
-                total,
-                sizes,
-                center_x,
-                center_y,
-                canvas_w,
-                canvas_h,
+        anchors = self._cluster_anchors(len(clusters), canvas_w, canvas_h)
+
+        for rank, idx in enumerate(all_movable_sorted):
+            cluster_id = cluster_assignments.get(idx, 0)
+            anchor_x, anchor_y = anchors[cluster_id]
+            # Compute cluster radius based on all macros in cluster
+            cluster = clusters[cluster_id]
+            cluster_radius = self._cluster_radius(cluster, sizes)
+
+            target_x, target_y = self._macro_target(
+                idx=idx,
+                rank=rank,
+                total=len(all_movable_sorted),
+                anchor_x=anchor_x,
+                anchor_y=anchor_y,
+                cluster_radius=cluster_radius,
+                sizes=sizes,
+                canvas_w=canvas_w,
+                canvas_h=canvas_h,
             )
-
             x, y = self._find_legal_position(
                 idx=idx,
                 target_x=target_x,
@@ -93,99 +108,136 @@ class ConnectivityCenterPlacer:
                 placement=placement,
                 placed_hard=placed_hard,
                 sizes=sizes,
-                keepout=keepout,
                 canvas_w=canvas_w,
                 canvas_h=canvas_h,
             )
-
             placement[idx, 0] = x
             placement[idx, 1] = y
             placed_hard[idx] = True
 
-        self._legalize_overlaps(
-            placement=placement,
-            movable_indices=movable_indices,
-            sizes=sizes,
-            keepout=keepout,
-            canvas_w=canvas_w,
-            canvas_h=canvas_h,
-        )
+        # Final aggressive legalization pass
+        self._final_legalize_overlaps(placement, all_movable_sorted, placed_hard, sizes, canvas_w, canvas_h)
 
         return placement
 
-    def _compute_macro_degrees(self, benchmark: Benchmark) -> torch.Tensor:
-        """
-        Return connectivity degree per hard macro.
-
-        Preferred path uses benchmark.netlist.get_macro_degree(i) if present.
-        Fallback computes hyperedge degree from benchmark.net_nodes.
-        """
-        num_hard = benchmark.num_hard_macros
-        degrees = torch.zeros(num_hard, dtype=torch.float32)
-
-        netlist = getattr(benchmark, "netlist", None)
-        if netlist is not None and hasattr(netlist, "get_macro_degree"):
-            for i in range(num_hard):
-                degrees[i] = float(netlist.get_macro_degree(i))
-            return degrees
-
-        for net_nodes in benchmark.net_nodes:
-            hard_nodes = net_nodes[net_nodes < num_hard]
-            if hard_nodes.numel() <= 1:
+    def _macro_degrees(self, benchmark: Benchmark) -> torch.Tensor:
+        degrees = torch.zeros(benchmark.num_hard_macros, dtype=torch.float32)
+        for net in benchmark.net_nodes:
+            hard_nodes = net[net < benchmark.num_hard_macros]
+            if hard_nodes.numel() < 2:
                 continue
-            unique_hard = torch.unique(hard_nodes)
-            contribution = float(unique_hard.numel() - 1)
-            for idx in unique_hard.tolist():
+            unique_nodes = torch.unique(hard_nodes)
+            contribution = float(unique_nodes.numel() - 1)
+            for idx in unique_nodes.tolist():
                 degrees[idx] += contribution
-
         return degrees
 
-    def _build_keepout(self, hard_sizes: torch.Tensor, degrees: torch.Tensor) -> torch.Tensor:
-        size_scale = torch.maximum(hard_sizes[:, 0], hard_sizes[:, 1])
-        max_degree = max(float(torch.max(degrees).item()), 1.0)
-        degree_scale = 0.5 + (degrees / max_degree)
-        return self.base_keepout_ratio * size_scale * degree_scale
+    def _build_clusters(
+        self,
+        benchmark: Benchmark,
+        movable_mask: torch.Tensor,
+        degrees: torch.Tensor,
+    ) -> list[list[int]]:
+        num_hard = benchmark.num_hard_macros
+        parent = list(range(num_hard))
 
-    def _target_from_rank(
+        def find(x: int) -> int:
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def union(a: int, b: int) -> None:
+            ra = find(a)
+            rb = find(b)
+            if ra != rb:
+                parent[rb] = ra
+
+        # Connectivity-based grouping on the hard-macro projection of each net.
+        for net in benchmark.net_nodes:
+            hard_nodes = [int(idx) for idx in net.tolist() if idx < num_hard and movable_mask[idx]]
+            if len(hard_nodes) < 2:
+                continue
+            first = hard_nodes[0]
+            for other in hard_nodes[1:]:
+                union(first, other)
+
+        components: dict[int, list[int]] = {}
+        for idx in torch.where(movable_mask[:num_hard])[0].tolist():
+            root = find(idx)
+            components.setdefault(root, []).append(idx)
+
+        clusters: list[list[int]] = []
+        for component in components.values():
+            component.sort(
+                key=lambda idx: (
+                    -float(degrees[idx].item()),
+                    -float((benchmark.macro_sizes[idx, 0] * benchmark.macro_sizes[idx, 1]).item()),
+                )
+            )
+            for start in range(0, len(component), self.cluster_size):
+                clusters.append(component[start : start + self.cluster_size])
+
+        return clusters
+
+    def _cluster_anchors(self, count: int, canvas_w: float, canvas_h: float) -> list[tuple[float, float]]:
+        if count <= 0:
+            return []
+
+        center_x = canvas_w * 0.5
+        center_y = canvas_h * 0.5
+        max_rx = canvas_w * 0.32
+        max_ry = canvas_h * 0.32
+        golden_angle = 2.399963229728653
+
+        anchors: list[tuple[float, float]] = []
+        for i in range(count):
+            if count == 1:
+                radial = 0.0
+            else:
+                radial = (i + 0.5) / float(count)
+            theta = i * golden_angle
+            x = center_x + math.cos(theta) * max_rx * radial
+            y = center_y + math.sin(theta) * max_ry * radial
+            anchors.append((x, y))
+        return anchors
+
+    def _cluster_radius(self, cluster: list[int], sizes: torch.Tensor) -> float:
+        if not cluster:
+            return self.min_search_step
+        scale = 0.0
+        for idx in cluster:
+            scale += float(max(sizes[idx, 0].item(), sizes[idx, 1].item()))
+        return max(self.min_search_step, scale / max(1, len(cluster)) * 0.6)
+
+    def _macro_target(
         self,
         idx: int,
         rank: int,
         total: int,
+        anchor_x: float,
+        anchor_y: float,
+        cluster_radius: float,
         sizes: torch.Tensor,
-        center_x: float,
-        center_y: float,
         canvas_w: float,
         canvas_h: float,
     ) -> tuple[float, float]:
-        if total <= 1:
-            radial_fraction = 0.0
-        else:
-            radial_fraction = rank / float(total - 1)
-
         w = float(sizes[idx, 0].item())
         h = float(sizes[idx, 1].item())
 
-        max_rx = max(0.0, canvas_w * 0.48 - w * 0.5)
-        max_ry = max(0.0, canvas_h * 0.48 - h * 0.5)
+        if total <= 1:
+            radial = 0.0
+        else:
+            radial = rank / float(total - 1)
 
-        radius_x = radial_fraction * max_rx
-        radius_y = radial_fraction * max_ry
+        theta = (idx + 1) * 2.399963229728653
+        offset_scale = 0.25 + 0.75 * radial
+        x = anchor_x + math.cos(theta) * cluster_radius * offset_scale
+        y = anchor_y + math.sin(theta) * cluster_radius * offset_scale
 
-        # Deterministic angular spread to avoid clustering on one axis.
-        golden_angle = 2.399963229728653
-        theta = (idx * golden_angle) % (2.0 * math.pi)
-
-        target_x = center_x + radius_x * math.cos(theta)
-        target_y = center_y + radius_y * math.sin(theta)
-
-        x_min = w * 0.5
-        x_max = canvas_w - w * 0.5
-        y_min = h * 0.5
-        y_max = canvas_h - h * 0.5
-
-        target_x = min(max(target_x, x_min), x_max)
-        target_y = min(max(target_y, y_min), y_max)
-        return target_x, target_y
+        x = min(max(x, w * 0.5), canvas_w - w * 0.5)
+        y = min(max(y, h * 0.5), canvas_h - h * 0.5)
+        return x, y
 
     def _find_legal_position(
         self,
@@ -195,11 +247,9 @@ class ConnectivityCenterPlacer:
         placement: torch.Tensor,
         placed_hard: torch.Tensor,
         sizes: torch.Tensor,
-        keepout: torch.Tensor,
         canvas_w: float,
         canvas_h: float,
     ) -> tuple[float, float]:
-        # Adaptive relaxation: try stronger keep-out first, then relax to pure legality.
         for margin_scale in (1.0, 0.5, 0.0):
             candidate = self._ring_search(
                 idx,
@@ -208,49 +258,32 @@ class ConnectivityCenterPlacer:
                 placement,
                 placed_hard,
                 sizes,
-                keepout,
-                margin_scale,
                 canvas_w,
                 canvas_h,
+                margin_scale,
             )
             if candidate is not None:
                 return candidate
 
-        # Dense fallback over the canvas to preserve legality in hard cases.
-        fallback = self._grid_fallback(
+        candidate = self._grid_fallback(
             idx,
             target_x,
             target_y,
             placement,
             placed_hard,
             sizes,
-            keepout,
             canvas_w,
             canvas_h,
         )
-        if fallback is not None:
-            return fallback
+        if candidate is not None:
+            return candidate
 
-        raster = self._raster_fallback(
-            idx,
-            target_x,
-            target_y,
-            placement,
-            placed_hard,
-            sizes,
-            keepout,
-            canvas_w,
-            canvas_h,
-        )
-        if raster is not None:
-            return raster
-
-        # Last resort: clipped target (may be invalid if impossible to legalize).
         w = float(sizes[idx, 0].item())
         h = float(sizes[idx, 1].item())
-        x = min(max(target_x, w * 0.5), canvas_w - w * 0.5)
-        y = min(max(target_y, h * 0.5), canvas_h - h * 0.5)
-        return x, y
+        return (
+            min(max(target_x, w * 0.5), canvas_w - w * 0.5),
+            min(max(target_y, h * 0.5), canvas_h - h * 0.5),
+        )
 
     def _ring_search(
         self,
@@ -260,14 +293,12 @@ class ConnectivityCenterPlacer:
         placement: torch.Tensor,
         placed_hard: torch.Tensor,
         sizes: torch.Tensor,
-        keepout: torch.Tensor,
-        margin_scale: float,
         canvas_w: float,
         canvas_h: float,
+        margin_scale: float,
     ) -> tuple[float, float] | None:
         w = float(sizes[idx, 0].item())
         h = float(sizes[idx, 1].item())
-
         x_min = w * 0.5
         x_max = canvas_w - w * 0.5
         y_min = h * 0.5
@@ -276,43 +307,25 @@ class ConnectivityCenterPlacer:
         base_x = min(max(target_x, x_min), x_max)
         base_y = min(max(target_y, y_min), y_max)
 
-        if self._is_legal(
-            idx,
-            base_x,
-            base_y,
-            placement,
-            placed_hard,
-            sizes,
-            keepout,
-            margin_scale,
-        ):
+        if self._is_legal(idx, base_x, base_y, placement, placed_hard, sizes, margin_scale):
             return base_x, base_y
 
-        step_x = max(w * 0.35, self.min_search_step)
-        step_y = max(h * 0.35, self.min_search_step)
+        step_x = max(self.min_search_step, w * 0.35)
+        step_y = max(self.min_search_step, h * 0.35)
 
         for ring in range(1, self.max_rings + 1):
             radius_x = ring * step_x
             radius_y = ring * step_y
-            samples = 12 + ring * 4
-
+            samples = 8 + ring * 4
             best = None
             best_score = float("inf")
-            for k in range(samples):
-                theta = (2.0 * math.pi * k) / samples
+
+            for sample in range(samples):
+                theta = (2.0 * math.pi * sample) / samples
                 x = min(max(base_x + radius_x * math.cos(theta), x_min), x_max)
                 y = min(max(base_y + radius_y * math.sin(theta), y_min), y_max)
 
-                if not self._is_legal(
-                    idx,
-                    x,
-                    y,
-                    placement,
-                    placed_hard,
-                    sizes,
-                    keepout,
-                    margin_scale,
-                ):
+                if not self._is_legal(idx, x, y, placement, placed_hard, sizes, margin_scale):
                     continue
 
                 score = (x - target_x) ** 2 + (y - target_y) ** 2
@@ -333,7 +346,6 @@ class ConnectivityCenterPlacer:
         placement: torch.Tensor,
         placed_hard: torch.Tensor,
         sizes: torch.Tensor,
-        keepout: torch.Tensor,
         canvas_w: float,
         canvas_h: float,
     ) -> tuple[float, float] | None:
@@ -344,189 +356,16 @@ class ConnectivityCenterPlacer:
         y_min = h * 0.5
         y_max = canvas_h - h * 0.5
 
-        xs = torch.linspace(x_min, x_max, steps=self.fallback_grid_steps)
-        ys = torch.linspace(y_min, y_max, steps=self.fallback_grid_steps)
-
-        best = None
-        best_score = float("inf")
-
-        for y in ys.tolist():
-            for x in xs.tolist():
-                if not self._is_legal(
-                    idx,
-                    x,
-                    y,
-                    placement,
-                    placed_hard,
-                    sizes,
-                    keepout,
-                    margin_scale=0.0,
-                ):
-                    continue
-
-                score = (x - target_x) ** 2 + (y - target_y) ** 2
-                if score < best_score:
-                    best_score = score
-                    best = (x, y)
-
-        return best
-
-    def _raster_fallback(
-        self,
-        idx: int,
-        target_x: float,
-        target_y: float,
-        placement: torch.Tensor,
-        placed_hard: torch.Tensor,
-        sizes: torch.Tensor,
-        keepout: torch.Tensor,
-        canvas_w: float,
-        canvas_h: float,
-    ) -> tuple[float, float] | None:
-        w = float(sizes[idx, 0].item())
-        h = float(sizes[idx, 1].item())
-
-        x_min = w * 0.5
-        x_max = canvas_w - w * 0.5
-        y_min = h * 0.5
-        y_max = canvas_h - h * 0.5
-
-        x_step = max(0.5, min(w * 0.2, 4.0))
-        y_step = max(0.5, min(h * 0.2, 4.0))
-
-        x_count = max(2, int((x_max - x_min) / x_step) + 1)
-        y_count = max(2, int((y_max - y_min) / y_step) + 1)
-
-        xs = torch.linspace(x_min, x_max, steps=x_count).tolist()
-        ys = torch.linspace(y_min, y_max, steps=y_count).tolist()
-
-        xs.sort(key=lambda val: abs(val - target_x))
-        ys.sort(key=lambda val: abs(val - target_y))
+        xs = torch.linspace(x_min, x_max, steps=self.fallback_grid_steps).tolist()
+        ys = torch.linspace(y_min, y_max, steps=self.fallback_grid_steps).tolist()
+        xs.sort(key=lambda value: abs(value - target_x))
+        ys.sort(key=lambda value: abs(value - target_y))
 
         for y in ys:
             for x in xs:
-                if self._is_legal(
-                    idx,
-                    x,
-                    y,
-                    placement,
-                    placed_hard,
-                    sizes,
-                    keepout,
-                    margin_scale=0.0,
-                ):
+                if self._is_legal(idx, x, y, placement, placed_hard, sizes, 0.0):
                     return x, y
-
         return None
-
-    def _legalize_overlaps(
-        self,
-        placement: torch.Tensor,
-        movable_indices: list[int],
-        sizes: torch.Tensor,
-        keepout: torch.Tensor,
-        canvas_w: float,
-        canvas_h: float,
-    ):
-        num_hard = keepout.shape[0]
-        blockers = torch.ones(num_hard, dtype=torch.bool)
-
-        for _ in range(self.legalization_passes):
-            if not self._has_any_hard_overlap(placement, sizes, num_hard):
-                return
-
-            moved = False
-            # Move lower-degree (outer-ring) macros first to preserve center intent.
-            for idx in reversed(movable_indices):
-                blockers[idx] = False
-
-                x0 = float(placement[idx, 0].item())
-                y0 = float(placement[idx, 1].item())
-                already_legal = self._is_legal(
-                    idx,
-                    x0,
-                    y0,
-                    placement,
-                    blockers,
-                    sizes,
-                    keepout,
-                    margin_scale=0.0,
-                )
-                if already_legal:
-                    blockers[idx] = True
-                    continue
-
-                candidate = self._ring_search(
-                    idx,
-                    x0,
-                    y0,
-                    placement,
-                    blockers,
-                    sizes,
-                    keepout,
-                    margin_scale=0.0,
-                    canvas_w=canvas_w,
-                    canvas_h=canvas_h,
-                )
-
-                if candidate is None:
-                    candidate = self._grid_fallback(
-                        idx,
-                        x0,
-                        y0,
-                        placement,
-                        blockers,
-                        sizes,
-                        keepout,
-                        canvas_w,
-                        canvas_h,
-                    )
-
-                if candidate is None:
-                    candidate = self._raster_fallback(
-                        idx,
-                        x0,
-                        y0,
-                        placement,
-                        blockers,
-                        sizes,
-                        keepout,
-                        canvas_w,
-                        canvas_h,
-                    )
-
-                if candidate is not None:
-                    placement[idx, 0] = candidate[0]
-                    placement[idx, 1] = candidate[1]
-                    moved = True
-
-                blockers[idx] = True
-
-            if not moved:
-                return
-
-    def _has_any_hard_overlap(
-        self,
-        placement: torch.Tensor,
-        sizes: torch.Tensor,
-        num_hard: int,
-    ) -> bool:
-        for i in range(num_hard):
-            x_i = float(placement[i, 0].item())
-            y_i = float(placement[i, 1].item())
-            w_i = float(sizes[i, 0].item())
-            h_i = float(sizes[i, 1].item())
-            for j in range(i + 1, num_hard):
-                x_j = float(placement[j, 0].item())
-                y_j = float(placement[j, 1].item())
-                w_j = float(sizes[j, 0].item())
-                h_j = float(sizes[j, 1].item())
-                if (
-                    abs(x_i - x_j) < (w_i + w_j) * 0.5 + self.edge_gap
-                    and abs(y_i - y_j) < (h_i + h_j) * 0.5 + self.edge_gap
-                ):
-                    return True
-        return False
 
     def _is_legal(
         self,
@@ -536,29 +375,58 @@ class ConnectivityCenterPlacer:
         placement: torch.Tensor,
         placed_hard: torch.Tensor,
         sizes: torch.Tensor,
-        keepout: torch.Tensor,
         margin_scale: float,
     ) -> bool:
         w_i = float(sizes[idx, 0].item())
         h_i = float(sizes[idx, 1].item())
-        keep_i = float(keepout[idx].item())
 
-        blocked = torch.where(placed_hard)[0].tolist()
-        for j in blocked:
+        for j in torch.where(placed_hard)[0].tolist():
             if j == idx:
                 continue
-
             x_j = float(placement[j, 0].item())
             y_j = float(placement[j, 1].item())
             w_j = float(sizes[j, 0].item())
             h_j = float(sizes[j, 1].item())
-            keep_j = float(keepout[j].item())
 
-            margin = margin_scale * max(keep_i, keep_j)
-            sep_x = (w_i + w_j) * 0.5 + self.edge_gap + margin
-            sep_y = (h_i + h_j) * 0.5 + self.edge_gap + margin
-
+            extra_margin = margin_scale * 0.15 * max(w_i, h_i, w_j, h_j)
+            sep_x = (w_i + w_j) * 0.5 + self.edge_gap + extra_margin
+            sep_y = (h_i + h_j) * 0.5 + self.edge_gap + extra_margin
             if abs(x - x_j) < sep_x and abs(y - y_j) < sep_y:
                 return False
 
         return True
+
+    def _final_legalize_overlaps(
+        self,
+        placement: torch.Tensor,
+        movable_indices: list[int],
+        placed_hard: torch.Tensor,
+        sizes: torch.Tensor,
+        canvas_w: float,
+        canvas_h: float,
+    ) -> None:
+        """Quick final pass targeting only macros with actual overlaps."""
+        for _ in range(2):
+            overlapping = []
+            for idx in movable_indices:
+                x = float(placement[idx, 0].item())
+                y = float(placement[idx, 1].item())
+                if not self._is_legal(idx, x, y, placement, placed_hard, sizes, 0.0):
+                    overlapping.append(idx)
+            
+            if not overlapping:
+                break
+            
+            for idx in overlapping:
+                target_x = float(placement[idx, 0].item())
+                target_y = float(placement[idx, 1].item())
+                candidate = self._ring_search(
+                    idx, target_x, target_y, placement, placed_hard, sizes, canvas_w, canvas_h, 0.0
+                )
+                if candidate is None:
+                    candidate = self._grid_fallback(
+                        idx, target_x, target_y, placement, placed_hard, sizes, canvas_w, canvas_h
+                    )
+                if candidate is not None:
+                    placement[idx, 0] = candidate[0]
+                    placement[idx, 1] = candidate[1]
