@@ -19,6 +19,7 @@ from pathlib import Path
 from macro_place.loader import load_benchmark, load_benchmark_from_dir
 from macro_place.objective import compute_proxy_cost
 from macro_place.utils import validate_placement, visualize_placement
+from macro_place.def_writer import write_def
 
 # ── IBM ICCAD04 benchmark list ──────────────────────────────────────────────
 
@@ -294,6 +295,12 @@ def main():
         action="store_true",
         help="Visualize each placement after evaluation (saves to vis/<benchmark>.png).",
     )
+    parser.add_argument(
+        "--def",
+        dest="export_def",
+        action="store_true",
+        help="Generate DEF file for each placement (saves to <benchmark>.def).",
+    )
     args = parser.parse_args()
 
     # ── resolve paths ────────────────────────────────────────────────────
@@ -381,6 +388,10 @@ def main():
             vis_dir.mkdir(exist_ok=True)
             save_path = str(vis_dir / f"{name}.png")
             visualize_placement(result["placement"], result["benchmark"], save_path=save_path, plc=result.get("plc"))
+
+        if args.export_def:
+            def_path = f"{name}.def"
+            write_def(result["plc"], def_path, design_name=name)
 
     if len(results) > 1:
         _print_summary_table(results)
